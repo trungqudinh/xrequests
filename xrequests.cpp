@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
+#include <curl/curl.h>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -14,11 +15,9 @@
 #include <random>
 #include <stdio.h>
 #include <thread>
+#include <thread_pool.hpp>
 #include <unistd.h>
 #include <vector>
-
-#include <curl/curl.h>
-#include <thread_pool.hpp>
 
 using namespace std;
 typedef std::chrono::high_resolution_clock Clock;
@@ -356,51 +355,59 @@ void printStatistic(Statistic<T> _total, Statistic<T> _success)
 int main(int argc, char** argv)
 {
     auto arguments = get_option(argc, argv);
-    int line = 0;
-    string url;
-    vector<int> times;
-    vector<pair<string, function<bool(double)>>> checker = 
-    {
-        make_pair("< 1000ms", [](double v) {return v < 1.0;}),
-        make_pair(" < 100ms", [](double v) {return v < 0.1;}),
-        make_pair("  < 50ms", [](double v) {return v < 0.05;})
-    };
-
-    for(auto& c : checker)
-    {
-        statisticTotal.addPredicate(c);
-        statisticSuccess.addPredicate(c);
-    }
     ifstream file(arguments.inputFile);
-
+    if (file.good())
     {
-        ThreadPool pool(50);
-        bool stop = false;
-        while (!stop && line < arguments.limit)
+        int line = 0;
+        string url;
+        vector<int> times;
+        vector<pair<string, function<bool(double)>>> checker = 
         {
-            if (line % arguments.chunkSize == 0)
+            make_pair("< 1000ms", [](double v) {return v < 1.0;}),
+            make_pair(" < 100ms", [](double v) {return v < 0.1;}),
+            make_pair("  < 50ms", [](double v) {return v < 0.05;})
+        };
+
+        for(auto& c : checker)
+        {
+            statisticTotal.addPredicate(c);
+            statisticSuccess.addPredicate(c);
+        }
+        ifstream file(arguments.inputFile);
+
+        {
+            ThreadPool pool(50);
+            bool stop = false;
+            while (!stop && line < arguments.limit)
             {
-                times = randomSum<int>(arguments.timeRange, arguments.chunkSize, arguments.minDistance);
-            }
-            for(auto& t : times)
-            {
-                if (std::getline(file, url) && line < arguments.limit)
+                if (line % arguments.chunkSize == 0)
                 {
-                    if (url != "")
-                        pool.enqueue(fetch, url, arguments.timeout);
-                    std::this_thread::sleep_for(std::chrono::milliseconds(t));
-                    line++;
+                    times = randomSum<int>(arguments.timeRange, arguments.chunkSize, arguments.minDistance);
                 }
-                else
+                for(auto& t : times)
                 {
-                    stop = true;
-                    break;
+                    if (std::getline(file, url) && line < arguments.limit)
+                    {
+                        if (url != "")
+                            pool.enqueue(fetch, arguments.prefix + url, arguments.timeout);
+                        std::this_thread::sleep_for(std::chrono::milliseconds(t));
+                        line++;
+                    }
+                    else
+                    {
+                        stop = true;
+                        break;
+                    }
                 }
             }
         }
-    }
 
-    printStatistic(statisticTotal, statisticSuccess);
-    file.close();
+        printStatistic(statisticTotal, statisticSuccess);
+        file.close();
+    }
+    else
+    {
+        printError("File not exist");
+    }
     return 0;
 }
