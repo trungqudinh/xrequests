@@ -99,13 +99,14 @@ typedef struct Arguments
     int timeRange;
     int minDistance;
     int timeout;
+    bool noBody;
     void print()
     {
         cout << "inputFile " << inputFile << endl;
     }
 } Arguments ;
 
-Arguments defaultArguments = {"", "", 1000, 1000, 1000, 0, 1000};
+Arguments defaultArguments = {"", "", 1000, 1000, 1000, 0, 1000, false};
 
 enum CompressOptions : int
 {
@@ -115,7 +116,8 @@ enum CompressOptions : int
     CHUNK_SIZE = 0x88,
     TIME_RANGE = 0x89,
     MIN_DISTANCE = 0x90,
-    TIME_OUT = 0x91
+    TIME_OUT = 0x91,
+    NO_BODY = 0x92
 };
 
 map<CompressOptions, string> ArgumentsDescriptions =
@@ -125,7 +127,8 @@ map<CompressOptions, string> ArgumentsDescriptions =
     { CompressOptions::PREFIX, string("Prefix concatenate to requests.") + " Default: " + defaultArguments.prefix },
     { CompressOptions::CHUNK_SIZE, string("Number of requests per chunk will be sent in TIME_RANGE.") + "\nDefault: \"" + to_string(defaultArguments.chunkSize) + "\""},
     { CompressOptions::TIME_RANGE, string("Range of time in millisecond, that CHUNK_SIZE request will be distributed in.") + "\nDefault: " + to_string(defaultArguments.timeRange) },
-    { CompressOptions::MIN_DISTANCE, string("Mininum time between each request in millisecond.")  + "\nDefault: " + to_string(defaultArguments.minDistance) }
+    { CompressOptions::MIN_DISTANCE, string("Mininum time between each request in millisecond.")  + "\nDefault: " + to_string(defaultArguments.minDistance) },
+    { CompressOptions::NO_BODY, string("Skip getting body from response.") }
 };
 static struct argp_option options[] =
 {
@@ -143,6 +146,8 @@ static struct argp_option options[] =
         ArgumentsDescriptions[CompressOptions::TIME_RANGE].c_str(), 5},
     {"min-time-distance",  CompressOptions::MIN_DISTANCE, "MIN_DISTANCE", 0,
         ArgumentsDescriptions[CompressOptions::MIN_DISTANCE].c_str(), 5},
+    {"no-body",  CompressOptions::NO_BODY, "", 0,
+        ArgumentsDescriptions[CompressOptions::NO_BODY].c_str(), 5},
     {0, 0, 0, 0, 0, 0}
 };
 
@@ -178,6 +183,9 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state)
         case CompressOptions::TIME_OUT:
             arguments->timeout = abs(atoi(arg));
             break;
+        case CompressOptions::NO_BODY:
+            arguments->noBody = true;
+            break;
         case ARGP_KEY_END:
             if (arguments->inputFile ==  "")
             {
@@ -192,6 +200,7 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state)
 }
 
 static struct argp argp = {options, parse_opt, args_doc, doc, 0, 0, 0};
+static Arguments arguments;
 
 mutex mtx;
 Statistic<double> statisticTotal;
@@ -261,27 +270,33 @@ vector<vector<T>> getChunks(vector<T> _array, int _chunkSize)
     return res;
 }
 
-string perform_curl(string url, int timeout)
+pair<unsigned, string> perform_curl(string url, int timeout, bool noBody = false)
 {
     CURL *curl;
     CURLcode res;
     curl = curl_easy_init();
     string data = "";
+    long response_code;
     if (curl)
     {
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        if (noBody) {
+              curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+        }
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_callback);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, reinterpret_cast<void*>(&data));
 
         res = curl_easy_perform(curl);
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
         if(res != CURLE_OK)
+        {
             fprintf(stderr, "error: %s\n",
                     curl_easy_strerror(res));
-
+        }
         curl_easy_cleanup(curl);
     }
-    return data;
+    return {response_code, move(data)};
 }
 
 void handleResponse(string response)
@@ -299,13 +314,30 @@ void handleResponse(string response, double responseTime)
     mtx.unlock();
 }
 
-void fetch(string url, int timeout)
+void handleResponse(pair<unsigned, string> response, double responseTime)
+{
+    if (!arguments.noBody)
+            cout << response.second << endl;
+    mtx.lock();
+    statisticTotal.addValue(responseTime);
+    if(response.first == 200)
+    {
+        statisticSuccess.addValue(responseTime);
+    }
+//    else
+//    {
+//        cout << "ret = " << response.first << endl;
+//    }
+    mtx.unlock();
+}
+
+void fetch(string url, int timeout, bool no_body = false)
 {
     auto startTime = microtime();
-    string res = "";
+    pair<unsigned, string> res;
     try
     {
-        res = perform_curl(url, timeout);
+        res = perform_curl(url, timeout, no_body);
     }
     catch (exception& e)
     {
@@ -315,14 +347,16 @@ void fetch(string url, int timeout)
     handleResponse(res, endTime - startTime);
 }
 
+/*
 void fetchAll(vector<string> urls)
 {
-    ThreadPool pool(50);
+    ThreadPool pool(1000);
     for(auto& url : urls)
     {
         pool.enqueue(fetch, url, 1000);
     }
 }
+*/
 
 template<typename T>
 void printStatistic(Statistic<T> _total, Statistic<T> _success)
@@ -354,7 +388,7 @@ void printStatistic(Statistic<T> _total, Statistic<T> _success)
 
 int main(int argc, char** argv)
 {
-    auto arguments = get_option(argc, argv);
+    arguments = get_option(argc, argv);
     ifstream file(arguments.inputFile);
     if (file.good())
     {
@@ -376,7 +410,8 @@ int main(int argc, char** argv)
         ifstream file(arguments.inputFile);
 
         {
-            ThreadPool pool(50);
+//            ThreadPool pool(1000);
+            ThreadPool pool(arguments.limit);
             bool stop = false;
             while (!stop && line < arguments.limit)
             {
@@ -389,7 +424,7 @@ int main(int argc, char** argv)
                     if (std::getline(file, url) && line < arguments.limit)
                     {
                         if (url != "")
-                            pool.enqueue(fetch, arguments.prefix + url, arguments.timeout);
+                            pool.enqueue(fetch, arguments.prefix + url, arguments.timeout, arguments.noBody);
                         std::this_thread::sleep_for(std::chrono::milliseconds(t));
                         line++;
                     }
