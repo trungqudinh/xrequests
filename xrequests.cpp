@@ -13,6 +13,7 @@
 #include <map>
 #include <mutex>
 #include <random>
+#include <sstream>
 #include <stdio.h>
 #include <thread>
 #include <thread_pool.hpp>
@@ -146,8 +147,8 @@ static struct argp_option options[] =
         ArgumentsDescriptions[CompressOptions::TIME_RANGE].c_str(), 5},
     {"min-time-distance",  CompressOptions::MIN_DISTANCE, "MIN_DISTANCE", 0,
         ArgumentsDescriptions[CompressOptions::MIN_DISTANCE].c_str(), 5},
-    {"no-body",  CompressOptions::NO_BODY, "", 0,
-        ArgumentsDescriptions[CompressOptions::NO_BODY].c_str(), 5},
+    {"no-body",  CompressOptions::NO_BODY, 0, 0,
+        ArgumentsDescriptions[CompressOptions::NO_BODY].c_str(), 6},
     {0, 0, 0, 0, 0, 0}
 };
 
@@ -203,6 +204,7 @@ static struct argp argp = {options, parse_opt, args_doc, doc, 0, 0, 0};
 static Arguments arguments;
 
 mutex mtx;
+int process = 0;
 Statistic<double> statisticTotal;
 Statistic<double> statisticSuccess;
 
@@ -299,6 +301,29 @@ pair<unsigned, string> perform_curl(string url, int timeout, bool noBody = false
     return {response_code, move(data)};
 }
 
+void printProcess(float percent, float step = 0.01)
+{
+    int barLength = 50;
+    int pos = percent * barLength;
+    if (percent != 1 && (int(percent * 100) % int(step * 100) != 0 || pos == process))
+    {
+        return;
+    }
+
+    std::string output = "[";
+    for(int i=0; i != barLength; ++i)
+    {
+        if(i < pos)
+            output += "#";
+        else
+            output += " ";
+    }
+    output +=  "] " + std::to_string(int(percent * 100)) + "%\r";
+    process = pos;
+    std::cout << output;
+    fflush(stdout);
+}
+
 void handleResponse(string response)
 {
     cout << response << endl;
@@ -324,10 +349,8 @@ void handleResponse(pair<unsigned, string> response, double responseTime)
     {
         statisticSuccess.addValue(responseTime);
     }
-//    else
-//    {
-//        cout << "ret = " << response.first << endl;
-//    }
+//    cout << statisticTotal.getCount() << endl;
+    printProcess(1.0 * statisticTotal.getCount() / arguments.limit, 0.01);
     mtx.unlock();
 }
 
