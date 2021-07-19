@@ -9,6 +9,7 @@
 #include <curl/curl.h>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -310,17 +311,19 @@ void printProcess(float percent, float step = 0.01)
         return;
     }
 
+    std::ostringstream prefix;
+    prefix << "\033[;30;42m Progress: [" << std::setw (3) << std::to_string(int(percent * 100)) << "%] \033[0m" << " ";
     std::string output = "[";
     for(int i=0; i != barLength; ++i)
     {
         if(i < pos)
             output += "#";
         else
-            output += " ";
+            output += ".";
     }
-    output +=  "] " + std::to_string(int(percent * 100)) + "%\r";
+    output += "]\r";
     process = pos;
-    std::cout << output;
+    std::cout << prefix.str() << output;
     fflush(stdout);
 }
 
