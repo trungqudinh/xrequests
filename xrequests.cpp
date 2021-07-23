@@ -59,7 +59,7 @@ public:
 
     void addValue(T _value)
     {
-        values_.emplace_back(value);
+        values_.emplace_back(_value);
         min_ = count_ ? min(min_, _value) : _value;
         max_ = count_ ? max(max_, _value) : _value;
         sum_ += _value;
@@ -86,7 +86,7 @@ public:
     T getMax() { return max_; }
     T getMean() { return getSum() / getCount(); }
     unsigned getCount() { return count_; }
-    vector<T> getValues() {return values_};
+    vector<T> getValues() {return values_; }
 
 };
 
@@ -135,8 +135,8 @@ map<CompressOptions, string> ArgumentsDescriptions =
     { CompressOptions::CHUNK_SIZE, string("Number of requests per chunk will be sent in TIME_RANGE.") + "\nDefault: \"" + to_string(defaultArguments.chunkSize) + "\""},
     { CompressOptions::TIME_RANGE, string("Range of time in millisecond, that CHUNK_SIZE request will be distributed in.") + "\nDefault: " + to_string(defaultArguments.timeRange) },
     { CompressOptions::MIN_DISTANCE, string("Mininum time between each request in millisecond.")  + "\nDefault: " + to_string(defaultArguments.minDistance) },
+    { CompressOptions::RESPONSE_TIME_OUTPUT, string("Output path for request response times.")  + "\nDefault: " + defaultArguments.responseTimeOutput },
     { CompressOptions::NO_BODY, string("Skip getting body from response.") }
-    { CompressOptions::RESPONSE_TIME_OUTPUT, string("Output path for request response times")  + "\nDefault: " + to_string(defaultArguments.responseTimeOutput) },
 };
 static struct argp_option options[] =
 {
@@ -427,9 +427,15 @@ void printStatistic(Statistic<T> _total, Statistic<T> _success)
         ofstream file(arguments.responseTimeOutput);
         if (file.is_open())
         {
-            for(const auto &r : _total.getValues())
+            bool first = true;
+            for(const auto& r : _total.getValues())
             {
-                cout << $r << " ";
+                if (first)
+                {
+                    file << r;
+                    first = false;
+                }
+                file << endl << r;
             }
             file.close();
         }
