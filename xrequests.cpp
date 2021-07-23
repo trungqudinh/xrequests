@@ -32,6 +32,7 @@ private:
     T min_;
     T max_;
     unsigned count_;
+    vector<T> values_;
     map<string, unsigned> countOn_;
     map<string, Predicate> predicates_;
 public:
@@ -58,6 +59,7 @@ public:
 
     void addValue(T _value)
     {
+        values_.emplace_back(value);
         min_ = count_ ? min(min_, _value) : _value;
         max_ = count_ ? max(max_, _value) : _value;
         sum_ += _value;
@@ -84,6 +86,7 @@ public:
     T getMax() { return max_; }
     T getMean() { return getSum() / getCount(); }
     unsigned getCount() { return count_; }
+    vector<T> getValues() {return values_};
 
 };
 
@@ -102,13 +105,14 @@ typedef struct Arguments
     int minDistance;
     int timeout;
     bool noBody;
+    string responseTimeOutput;
     void print()
     {
         cout << "inputFile " << inputFile << endl;
     }
 } Arguments ;
 
-Arguments defaultArguments = {"", "", 1000, 1000, 1000, 0, 1000, false};
+Arguments defaultArguments = {"", "", 1000, 1000, 1000, 0, 1000, false, "response_time"};
 
 enum CompressOptions : int
 {
@@ -119,7 +123,8 @@ enum CompressOptions : int
     TIME_RANGE = 0x89,
     MIN_DISTANCE = 0x90,
     TIME_OUT = 0x91,
-    NO_BODY = 0x92
+    NO_BODY = 0x92,
+    RESPONSE_TIME_OUTPUT = 0x93
 };
 
 map<CompressOptions, string> ArgumentsDescriptions =
@@ -131,6 +136,7 @@ map<CompressOptions, string> ArgumentsDescriptions =
     { CompressOptions::TIME_RANGE, string("Range of time in millisecond, that CHUNK_SIZE request will be distributed in.") + "\nDefault: " + to_string(defaultArguments.timeRange) },
     { CompressOptions::MIN_DISTANCE, string("Mininum time between each request in millisecond.")  + "\nDefault: " + to_string(defaultArguments.minDistance) },
     { CompressOptions::NO_BODY, string("Skip getting body from response.") }
+    { CompressOptions::RESPONSE_TIME_OUTPUT, string("Output path for request response times")  + "\nDefault: " + to_string(defaultArguments.responseTimeOutput) },
 };
 static struct argp_option options[] =
 {
@@ -148,6 +154,8 @@ static struct argp_option options[] =
         ArgumentsDescriptions[CompressOptions::TIME_RANGE].c_str(), 5},
     {"min-time-distance",  CompressOptions::MIN_DISTANCE, "MIN_DISTANCE", 0,
         ArgumentsDescriptions[CompressOptions::MIN_DISTANCE].c_str(), 5},
+    {"response-time-output",  CompressOptions::RESPONSE_TIME_OUTPUT, "RESPONSE_TIME_OUTPUT", 0,
+        ArgumentsDescriptions[CompressOptions::RESPONSE_TIME_OUTPUT].c_str(), 5},
     {"no-body",  CompressOptions::NO_BODY, 0, 0,
         ArgumentsDescriptions[CompressOptions::NO_BODY].c_str(), 6},
     {0, 0, 0, 0, 0, 0}
@@ -184,6 +192,9 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state)
             break;
         case CompressOptions::TIME_OUT:
             arguments->timeout = abs(atoi(arg));
+            break;
+        case CompressOptions::RESPONSE_TIME_OUTPUT:
+            arguments->responseTimeOutput = arg;
             break;
         case CompressOptions::NO_BODY:
             arguments->noBody = true;
@@ -410,6 +421,19 @@ void printStatistic(Statistic<T> _total, Statistic<T> _success)
         auto percent = c.second * 100.0 / _success.getCount();
         printf("%16s: %5d ~ %6.2f %%\n", c.first.c_str(), c.second, percent);
     }
+
+    if (arguments.responseTimeOutput != "")
+    {
+        ofstream file(arguments.responseTimeOutput);
+        if (file.is_open())
+        {
+            for(const auto &r : _total.getValues())
+            {
+                cout << $r << " ";
+            }
+            file.close();
+        }
+    }
 }
 
 int main(int argc, char** argv)
@@ -436,7 +460,6 @@ int main(int argc, char** argv)
         ifstream file(arguments.inputFile);
 
         {
-//            ThreadPool pool(1000);
             ThreadPool pool(arguments.limit);
             bool stop = false;
             while (!stop && line < arguments.limit)
