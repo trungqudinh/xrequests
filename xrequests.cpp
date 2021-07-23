@@ -20,6 +20,7 @@
 #include <thread_pool.hpp>
 #include <unistd.h>
 #include <vector>
+#include <jsoncpp/json/json.h>
 
 using namespace std;
 typedef std::chrono::high_resolution_clock Clock;
@@ -240,6 +241,24 @@ double microtime() {
     Clock::time_point t = Clock::now();
     return std::chrono::duration_cast<std::chrono::duration<double>>(t.time_since_epoch()).count();
 }
+template<typename CONTAINER>
+Json::Value make_json_array(
+    const CONTAINER& container,
+    std::function<Json::Value(const typename CONTAINER::value_type&)> function
+) {
+    Json::Value array = Json::arrayValue;
+    int i = 0;
+    for (const auto& element : container) {
+        array[i++] = function(element);
+    }
+    return array;
+}
+
+template<typename CONTAINER>
+Json::Value make_json_array(const CONTAINER& container) {
+    return make_json_array(container, [](const typename CONTAINER::value_type& value){return Json::Value(value);});
+}
+
 
 template <typename T>
 vector<T> randomSum(T _sum, int _len, T _min = 0, int _factor = 100000 )
@@ -427,6 +446,10 @@ void printStatistic(Statistic<T> _total, Statistic<T> _success)
         ofstream file(arguments.responseTimeOutput);
         if (file.is_open())
         {
+            Json::Value res;
+            res["total"] = make_json_array(_total.getValues());
+            res["success"] = make_json_array(_success.getValues());
+            /*
             bool first = true;
             for(const auto& r : _total.getValues())
             {
@@ -437,6 +460,8 @@ void printStatistic(Statistic<T> _total, Statistic<T> _success)
                 }
                 file << endl << r;
             }
+            */
+            file << res.toStyledString();
             file.close();
         }
     }
@@ -491,7 +516,6 @@ int main(int argc, char** argv)
                 }
             }
         }
-
         printStatistic(statisticTotal, statisticSuccess);
         file.close();
     }
