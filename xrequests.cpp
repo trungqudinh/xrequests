@@ -106,20 +106,22 @@ typedef struct Arguments
     int minDistance;
     int timeout;
     bool noBody;
+    string output;
     string responseTimeOutput;
     void print()
     {
         cout << "inputFile " << inputFile << endl;
     }
-} Arguments ;
+} Arguments;
 
-Arguments defaultArguments = {"", "", 1000, 1000, 1000, 0, 1000, false, "response_time"};
+Arguments defaultArguments = {"", "", 1000, 1000, 1000, 0, 1000, false, "response", "response_time"};
 
 enum CompressOptions : int
 {
     INPUT = 'i',
     LIMIT = 'l',
     PREFIX = 'p',
+    OUTPUT = 'o',
     CHUNK_SIZE = 0x88,
     TIME_RANGE = 0x89,
     MIN_DISTANCE = 0x90,
@@ -137,6 +139,7 @@ map<CompressOptions, string> ArgumentsDescriptions =
     { CompressOptions::TIME_RANGE, string("Range of time in millisecond, that CHUNK_SIZE request will be distributed in.") + "\nDefault: " + to_string(defaultArguments.timeRange) },
     { CompressOptions::MIN_DISTANCE, string("Mininum time between each request in millisecond.")  + "\nDefault: " + to_string(defaultArguments.minDistance) },
     { CompressOptions::RESPONSE_TIME_OUTPUT, string("Output path for request response times.")  + "\nDefault: " + defaultArguments.responseTimeOutput },
+    { CompressOptions::OUTPUT, string("Output path response body")  + "\nDefault: " + defaultArguments.output },
     { CompressOptions::NO_BODY, string("Skip getting body from response.") }
 };
 static struct argp_option options[] =
@@ -147,6 +150,8 @@ static struct argp_option options[] =
         ArgumentsDescriptions[CompressOptions::LIMIT].c_str(), 0},
     {"prefix",  CompressOptions::PREFIX, "PREFIX", 0,
         ArgumentsDescriptions[CompressOptions::PREFIX].c_str(), 0},
+    {"output",  CompressOptions::OUTPUT, "OUTPUT", 0,
+        ArgumentsDescriptions[CompressOptions::OUTPUT].c_str(), 0},
     {"timeout", CompressOptions::TIME_OUT, "TIMEOUT", 0,
         ArgumentsDescriptions[CompressOptions::TIME_OUT].c_str(), 5},
     {"chunk-size", CompressOptions::CHUNK_SIZE, "SIZE", 0,
@@ -194,6 +199,9 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state)
         case CompressOptions::TIME_OUT:
             arguments->timeout = abs(atoi(arg));
             break;
+        case CompressOptions::OUTPUT:
+            arguments->output = arg;
+            break;
         case CompressOptions::RESPONSE_TIME_OUTPUT:
             arguments->responseTimeOutput = arg;
             break;
@@ -215,6 +223,7 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state)
 
 static struct argp argp = {options, parse_opt, args_doc, doc, 0, 0, 0};
 static Arguments arguments;
+static ofstream output_file;
 
 mutex mtx;
 int process = 0;
@@ -375,7 +384,16 @@ void handleResponse(string response, double responseTime)
 void handleResponse(pair<unsigned, string> response, double responseTime)
 {
     if (!arguments.noBody)
+    {
+        if (arguments.output != "stdout")
+        {
+            output_file << response.second;
+        }
+        else
+        {
             cout << response.second << endl;
+        }
+    }
     mtx.lock();
     statisticTotal.addValue(responseTime);
     if(response.first == 200)
@@ -476,7 +494,7 @@ int main(int argc, char** argv)
         int line = 0;
         string url;
         vector<int> times;
-        vector<pair<string, function<bool(double)>>> checker = 
+        vector<pair<string, function<bool(double)>>> checker =
         {
             make_pair("< 1000ms", [](double v) {return v < 1.0;}),
             make_pair(" < 100ms", [](double v) {return v < 0.1;}),
@@ -489,6 +507,10 @@ int main(int argc, char** argv)
             statisticSuccess.addPredicate(c);
         }
         ifstream file(arguments.inputFile);
+        if (arguments.output != "stdout")
+        {
+            output_file.open(arguments.output);
+        }
 
         {
             ThreadPool pool(arguments.limit);
