@@ -93,7 +93,13 @@ public:
 
 void printError(string msg)
 {
-    printf("[ERROR] %s", msg.c_str());
+    std::cerr << "[ERROR] " <<  msg << std::endl;
+}
+
+void die(const std::string& msg)
+{
+    printError(msg);
+    exit(1);
 }
 
 typedef struct Arguments
@@ -106,15 +112,18 @@ typedef struct Arguments
     int minDistance;
     int timeout;
     bool noBody;
+    bool post;
+    bool repeatData;
     string output;
     string responseTimeOutput;
+    string dataFile;
     void print()
     {
         cout << "inputFile " << inputFile << endl;
     }
 } Arguments;
 
-Arguments defaultArguments = {"", "", 1000, 1000, 1000, 0, 1000, false, "response", "response_time"};
+Arguments defaultArguments = {"", "", 1000, 1000, 1000, 0, 1000, false, false, false, "response", "response_time", ""};
 
 enum CompressOptions : int
 {
@@ -123,35 +132,45 @@ enum CompressOptions : int
     PREFIX = 'p',
     OUTPUT = 'o',
     CHUNK_SIZE = 0x88,
-    TIME_RANGE = 0x89,
+    DATA_FILE = 0x89,
     MIN_DISTANCE = 0x90,
-    TIME_OUT = 0x91,
-    NO_BODY = 0x92,
-    RESPONSE_TIME_OUTPUT = 0x93
+    NO_BODY = 0x91,
+    POST = 0x92,
+    REPEAT_DATA = 0x93,
+    RESPONSE_TIME_OUTPUT = 0x94,
+    TIME_OUT = 0x95,
+    TIME_RANGE = 0x96
 };
 
 map<CompressOptions, string> ArgumentsDescriptions =
 {
-    { CompressOptions::TIME_OUT, string("Timeout of a request in millisecond.") + "\nDefault: " + to_string(defaultArguments.timeout) },
-    { CompressOptions::LIMIT, string("Number of requests to sent.") + "\nDefault: " + to_string(defaultArguments.limit) },
-    { CompressOptions::PREFIX, string("Prefix concatenate to requests.") + " Default: " + defaultArguments.prefix },
-    { CompressOptions::CHUNK_SIZE, string("Number of requests per chunk will be sent in TIME_RANGE.") + "\nDefault: \"" + to_string(defaultArguments.chunkSize) + "\""},
-    { CompressOptions::TIME_RANGE, string("Range of time in millisecond, that CHUNK_SIZE request will be distributed in.") + "\nDefault: " + to_string(defaultArguments.timeRange) },
-    { CompressOptions::MIN_DISTANCE, string("Mininum time between each request in millisecond.")  + "\nDefault: " + to_string(defaultArguments.minDistance) },
-    { CompressOptions::RESPONSE_TIME_OUTPUT, string("Output path for request response times.")  + "\nDefault: " + defaultArguments.responseTimeOutput },
-    { CompressOptions::OUTPUT, string("Output path response body")  + "\nDefault: " + defaultArguments.output },
-    { CompressOptions::NO_BODY, string("Skip getting body from response.") }
+    { CompressOptions::INPUT, string("[Required] Input file contain requests") + "\n"},
+    { CompressOptions::TIME_OUT, string("Timeout of a request in millisecond.") + "\nDefault: " + to_string(defaultArguments.timeout) + "\n"},
+    { CompressOptions::LIMIT, string("Number of requests to sent.") + "\nDefault: " + to_string(defaultArguments.limit) + "\n"},
+    { CompressOptions::PREFIX, string("Prefix concatenate to requests.") + " Default: " + defaultArguments.prefix + "\n"},
+    { CompressOptions::CHUNK_SIZE, string("Number of requests per chunk will be sent in TIME_RANGE.") + "\nDefault: \"" + to_string(defaultArguments.chunkSize) + "\"" + "\n"},
+    { CompressOptions::TIME_RANGE, string("Range of time in millisecond, that CHUNK_SIZE request will be distributed in.") + "\nDefault: " + to_string(defaultArguments.timeRange) + "\n"},
+    { CompressOptions::MIN_DISTANCE, string("Mininum time between each request in millisecond.")  + "\nDefault: " + to_string(defaultArguments.minDistance) + "\n"},
+    { CompressOptions::RESPONSE_TIME_OUTPUT, string("Output path for request response times.")  + "\nDefault: " + defaultArguments.responseTimeOutput + "\n"},
+    { CompressOptions::OUTPUT, string("Output path response body")  + "\nDefault: " + defaultArguments.output + "\n"},
+    { CompressOptions::NO_BODY, string("Skip getting body from response.") + "\n"},
+    { CompressOptions::POST, string("Use HTTP POST method.") + "\n"},
+    { CompressOptions::DATA_FILE, string("Data file path to send") + "\n"},
+    { CompressOptions::REPEAT_DATA, string("When there're request to send but out of data, re-read DATA_FILE from the begin.") + "\n"}
 };
+
 static struct argp_option options[] =
 {
     {"input",  CompressOptions::INPUT, "INPUT_FILE", 0,
-        "[Required] Input file contain requests", 0},
+        ArgumentsDescriptions[CompressOptions::LIMIT].c_str(), 0},
     {"limit",  CompressOptions::LIMIT, "LIMIT", 0,
         ArgumentsDescriptions[CompressOptions::LIMIT].c_str(), 0},
     {"prefix",  CompressOptions::PREFIX, "PREFIX", 0,
         ArgumentsDescriptions[CompressOptions::PREFIX].c_str(), 0},
     {"output",  CompressOptions::OUTPUT, "OUTPUT", 0,
         ArgumentsDescriptions[CompressOptions::OUTPUT].c_str(), 0},
+    {"data-file",  CompressOptions::DATA_FILE, "DATA_FILE", 0,
+        ArgumentsDescriptions[CompressOptions::DATA_FILE].c_str(), 5},
     {"timeout", CompressOptions::TIME_OUT, "TIMEOUT", 0,
         ArgumentsDescriptions[CompressOptions::TIME_OUT].c_str(), 5},
     {"chunk-size", CompressOptions::CHUNK_SIZE, "SIZE", 0,
@@ -162,14 +181,17 @@ static struct argp_option options[] =
         ArgumentsDescriptions[CompressOptions::MIN_DISTANCE].c_str(), 5},
     {"response-time-output",  CompressOptions::RESPONSE_TIME_OUTPUT, "RESPONSE_TIME_OUTPUT", 0,
         ArgumentsDescriptions[CompressOptions::RESPONSE_TIME_OUTPUT].c_str(), 5},
+    {"post",  CompressOptions::POST, 0, 0,
+        ArgumentsDescriptions[CompressOptions::POST].c_str(), 6},
+    {"repeat-data",  CompressOptions::REPEAT_DATA, 0, 0,
+        ArgumentsDescriptions[CompressOptions::REPEAT_DATA].c_str(), 6},
     {"no-body",  CompressOptions::NO_BODY, 0, 0,
         ArgumentsDescriptions[CompressOptions::NO_BODY].c_str(), 6},
     {0, 0, 0, 0, 0, 0}
 };
 
 static char args_doc[] = "";
-
-static char doc[] = "Simultaneously send multiple http requests";
+static char doc[] = "Simultaneously send multiple HTTP requests";
 
 static error_t parse_opt (int key, char *arg, struct argp_state *state)
 {
@@ -202,8 +224,18 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state)
         case CompressOptions::OUTPUT:
             arguments->output = arg;
             break;
+        case CompressOptions::DATA_FILE:
+            arguments->dataFile = arg;
+            arguments->post = true;
+            break;
         case CompressOptions::RESPONSE_TIME_OUTPUT:
             arguments->responseTimeOutput = arg;
+            break;
+        case CompressOptions::POST:
+            arguments->post = true;
+            break;
+        case CompressOptions::REPEAT_DATA:
+            arguments->repeatData = true;
             break;
         case CompressOptions::NO_BODY:
             arguments->noBody = true;
@@ -250,6 +282,7 @@ double microtime() {
     Clock::time_point t = Clock::now();
     return std::chrono::duration_cast<std::chrono::duration<double>>(t.time_since_epoch()).count();
 }
+
 template<typename CONTAINER>
 Json::Value make_json_array(
     const CONTAINER& container,
@@ -267,7 +300,6 @@ template<typename CONTAINER>
 Json::Value make_json_array(const CONTAINER& container) {
     return make_json_array(container, [](const typename CONTAINER::value_type& value){return Json::Value(value);});
 }
-
 
 template <typename T>
 vector<T> randomSum(T _sum, int _len, T _min = 0, int _factor = 100000 )
@@ -312,7 +344,15 @@ vector<vector<T>> getChunks(vector<T> _array, int _chunkSize)
     return res;
 }
 
-pair<unsigned, string> perform_curl(string url, int timeout, bool noBody = false)
+string readFile(const string& filePath)
+{
+    std::ifstream f(filePath);
+    std::stringstream buffer;
+    buffer << f.rdbuf();
+    return buffer.str();
+}
+
+pair<unsigned, string> performCurl(const string& url, const int& timeout, const bool& noBody = false)
 {
     CURL *curl;
     CURLcode res;
@@ -328,6 +368,39 @@ pair<unsigned, string> perform_curl(string url, int timeout, bool noBody = false
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_callback);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, reinterpret_cast<void*>(&data));
+
+        res = curl_easy_perform(curl);
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+        if(res != CURLE_OK)
+        {
+            fprintf(stderr, "error: %s\n",
+                    curl_easy_strerror(res));
+        }
+        curl_easy_cleanup(curl);
+    }
+    return {response_code, move(data)};
+}
+
+pair<unsigned, string> httpPost(const string& url, const string& postData, const int& timeout, const bool& noBody = false)
+{
+    CURL *curl;
+    CURLcode res;
+    curl = curl_easy_init();
+    string data = "";
+    long response_code;
+    if (curl)
+    {
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        if (noBody) {
+              curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+        }
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_callback);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, reinterpret_cast<void*>(&data));
+
+        curl_easy_setopt(curl, CURLOPT_POST, 1L);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postData.c_str());
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, postData.size());
 
         res = curl_easy_perform(curl);
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
@@ -387,7 +460,7 @@ void handleResponse(pair<unsigned, string> response, double responseTime)
     {
         if (arguments.output != "stdout")
         {
-            output_file << response.second;
+            output_file << response.second << endl;
         }
         else
         {
@@ -400,18 +473,24 @@ void handleResponse(pair<unsigned, string> response, double responseTime)
     {
         statisticSuccess.addValue(responseTime);
     }
-//    cout << statisticTotal.getCount() << endl;
     printProcess(1.0 * statisticTotal.getCount() / arguments.limit, 0.01);
     mtx.unlock();
 }
 
-void fetch(string url, int timeout, bool no_body = false)
+void fetch(const string& url, const Arguments& option, const string& postData = "")
 {
     auto startTime = microtime();
     pair<unsigned, string> res;
     try
     {
-        res = perform_curl(url, timeout, no_body);
+        if (option.post)
+        {
+            res = httpPost(url, postData, option.timeout, option.noBody);
+        }
+        else
+        {
+            res = performCurl(url, option.timeout, option.noBody);
+        }
     }
     catch (exception& e)
     {
@@ -420,17 +499,6 @@ void fetch(string url, int timeout, bool no_body = false)
     auto endTime = microtime();
     handleResponse(res, endTime - startTime);
 }
-
-/*
-void fetchAll(vector<string> urls)
-{
-    ThreadPool pool(1000);
-    for(auto& url : urls)
-    {
-        pool.enqueue(fetch, url, 1000);
-    }
-}
-*/
 
 template<typename T>
 void printStatistic(Statistic<T> _total, Statistic<T> _success)
@@ -485,14 +553,46 @@ void printStatistic(Statistic<T> _total, Statistic<T> _success)
     }
 }
 
+string getNextPostData(ifstream& dataFile, const bool& repeatData)
+{
+    string data;
+    if (!std::getline(dataFile, data))
+    {
+        if (dataFile.eof() && repeatData)
+        {
+            dataFile.clear();
+            dataFile.seekg(0);
+            if (!std::getline(dataFile, data))
+            {
+                data = "Could not read data";
+            }
+        }
+    }
+    return data;
+}
+
 int main(int argc, char** argv)
 {
     arguments = get_option(argc, argv);
     ifstream file(arguments.inputFile);
     if (file.good())
     {
+        ifstream dataFile;
+        if (!arguments.dataFile.empty())
+        {
+            dataFile.open(arguments.dataFile);
+            if (dataFile.good())
+            {
+                //do nothing
+            }
+            else
+            {
+                die("Could not read data file: " + arguments.dataFile);
+            }
+        }
         int line = 0;
         string url;
+        string data;
         vector<int> times;
         vector<pair<string, function<bool(double)>>> checker =
         {
@@ -506,8 +606,7 @@ int main(int argc, char** argv)
             statisticTotal.addPredicate(c);
             statisticSuccess.addPredicate(c);
         }
-        ifstream file(arguments.inputFile);
-        if (arguments.output != "stdout")
+        if (!(arguments.noBody || arguments.output == "stdout"))
         {
             output_file.open(arguments.output);
         }
@@ -526,7 +625,13 @@ int main(int argc, char** argv)
                     if (std::getline(file, url) && line < arguments.limit)
                     {
                         if (url != "")
-                            pool.enqueue(fetch, arguments.prefix + url, arguments.timeout, arguments.noBody);
+                        {
+                            if (arguments.post)
+                            {
+                                data = getNextPostData(dataFile, arguments.repeatData);
+                            }
+                            pool.enqueue(fetch, arguments.prefix + url, arguments, data);
+                        }
                         std::this_thread::sleep_for(std::chrono::milliseconds(t));
                         line++;
                     }
@@ -537,13 +642,17 @@ int main(int argc, char** argv)
                     }
                 }
             }
+            if (dataFile.is_open())
+            {
+                dataFile.close();
+            }
         }
         printStatistic(statisticTotal, statisticSuccess);
         file.close();
     }
     else
     {
-        printError("File not exist");
+        die("Could not read input file: " + arguments.inputFile);
     }
     return 0;
 }
