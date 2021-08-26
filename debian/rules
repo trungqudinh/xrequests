@@ -1,0 +1,8 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+override_dh_auto_install:
+	#skip
+
+override_dh_usrlocal:
+	#skip

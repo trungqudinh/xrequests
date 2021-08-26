@@ -1,0 +1,11 @@
+Source: xrequests
+Section: base
+Priority: extra
+Maintainer: trung.qu.dinh <trung.qu.dinh@gmail.com>
+Build-Depends:
+ debhelper (>= 7.0.50~)
+Standards-Version: 3.8.4
+
+Package: xrequests
+Architecture: any
+Description: Simultaneously send multiple HTTP requests base on cURL.
