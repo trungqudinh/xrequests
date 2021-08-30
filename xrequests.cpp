@@ -114,6 +114,7 @@ typedef struct Arguments
     bool noBody;
     bool post;
     bool repeatData;
+    bool sequent;
     string output;
     string responseTimeOutput;
     string dataFile;
@@ -123,7 +124,7 @@ typedef struct Arguments
     }
 } Arguments;
 
-Arguments defaultArguments = {"", "", 1000, 1000, 1000, 0, 1000, false, false, false, "response", "response_time", ""};
+Arguments defaultArguments = {"", "", 1000, 1000, 1000, 0, 1000, false, false, false, false, "response", "response_time", ""};
 
 enum CompressOptions : int
 {
@@ -138,8 +139,9 @@ enum CompressOptions : int
     POST = 0x92,
     REPEAT_DATA = 0x93,
     RESPONSE_TIME_OUTPUT = 0x94,
-    TIME_OUT = 0x95,
-    TIME_RANGE = 0x96
+    SEQUENT = 0x95,
+    TIME_OUT = 0x96,
+    TIME_RANGE = 0x97
 };
 
 map<CompressOptions, string> ArgumentsDescriptions =
@@ -156,7 +158,8 @@ map<CompressOptions, string> ArgumentsDescriptions =
     { CompressOptions::NO_BODY, string("Skip getting body from response.") + "\n"},
     { CompressOptions::POST, string("Use HTTP POST method.") + "\n"},
     { CompressOptions::DATA_FILE, string("Data file path to send") + "\n"},
-    { CompressOptions::REPEAT_DATA, string("When there're request to send but out of data, re-read DATA_FILE from the begin.") + "\n"}
+    { CompressOptions::REPEAT_DATA, string("When there're request to send but out of data, re-read DATA_FILE from the begin.") + "\n"},
+    { CompressOptions::SEQUENT, string("Send requests sequently.") + "\n"}
 };
 
 static struct argp_option options[] =
@@ -187,6 +190,8 @@ static struct argp_option options[] =
         ArgumentsDescriptions[CompressOptions::REPEAT_DATA].c_str(), 6},
     {"no-body",  CompressOptions::NO_BODY, 0, 0,
         ArgumentsDescriptions[CompressOptions::NO_BODY].c_str(), 6},
+    {"sequent",  CompressOptions::SEQUENT, 0, 0,
+        ArgumentsDescriptions[CompressOptions::SEQUENT].c_str(), 6},
     {0, 0, 0, 0, 0, 0}
 };
 
@@ -239,6 +244,9 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state)
             break;
         case CompressOptions::NO_BODY:
             arguments->noBody = true;
+            break;
+        case CompressOptions::SEQUENT:
+            arguments->sequent = true;
             break;
         case ARGP_KEY_END:
             if (arguments->inputFile ==  "")
@@ -574,16 +582,17 @@ string getNextPostData(ifstream& dataFile, const bool& repeatData)
 int main(int argc, char** argv)
 {
     arguments = get_option(argc, argv);
+
+    std::ifstream inFile(arguments.inputFile);
+    arguments.limit = min(arguments.limit,
+            static_cast<int>(std::count(std::istreambuf_iterator<char>(inFile), std::istreambuf_iterator<char>(), '\n'))
+            );
+    inFile.close();
+
     ifstream file(arguments.inputFile);
     if (file.good())
     {
-        {
-            std::ifstream inFile(arguments.inputFile);
-            arguments.limit = min(arguments.limit,
-                    static_cast<int>(std::count(std::istreambuf_iterator<char>(inFile), std::istreambuf_iterator<char>(), '\n'))
-            );
-            inFile.close();
-        }
+
         ifstream dataFile;
         if (!arguments.dataFile.empty())
         {
@@ -620,35 +629,31 @@ int main(int argc, char** argv)
 
         {
             ThreadPool pool(arguments.chunkSize);
-            bool stop = false;
 
-            while (!stop && line < arguments.limit)
+            while (std::getline(file, url) && line < arguments.limit)
             {
-                if (line % arguments.chunkSize == 0)
+                if (url != "")
                 {
-                    times = randomSum<int>(arguments.timeRange, arguments.chunkSize, arguments.minDistance);
-                }
-                for(auto& t : times)
-                {
-                    if (std::getline(file, url) && line < arguments.limit)
+                    if (arguments.post)
                     {
-                        if (url != "")
-                        {
-                            if (arguments.post)
-                            {
-                                data = getNextPostData(dataFile, arguments.repeatData);
-                            }
-                            pool.enqueue(fetch, arguments.prefix + url, arguments, data);
-                        }
-                        std::this_thread::sleep_for(std::chrono::milliseconds(t));
-                        line++;
+                        data = getNextPostData(dataFile, arguments.repeatData);
+                    }
+                    if (arguments.sequent)
+                    {
+                        fetch(arguments.prefix + url, arguments, data);
                     }
                     else
                     {
-                        stop = true;
-                        break;
+                        if (line % arguments.chunkSize == 0 || times.empty())
+                        {
+                            times = randomSum<int>(arguments.timeRange, arguments.chunkSize, arguments.minDistance);
+                        }
+                        pool.enqueue(fetch, arguments.prefix + url, arguments, data);
+                        std::this_thread::sleep_for(std::chrono::milliseconds(times.back()));
+                        times.pop_back();
                     }
                 }
+                line++;
             }
             if (dataFile.is_open())
             {
