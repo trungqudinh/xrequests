@@ -577,6 +577,13 @@ int main(int argc, char** argv)
     ifstream file(arguments.inputFile);
     if (file.good())
     {
+        {
+            std::ifstream inFile(arguments.inputFile);
+            arguments.limit = min(arguments.limit,
+                    static_cast<int>(std::count(std::istreambuf_iterator<char>(inFile), std::istreambuf_iterator<char>(), '\n'))
+            );
+            inFile.close();
+        }
         ifstream dataFile;
         if (!arguments.dataFile.empty())
         {
@@ -612,8 +619,9 @@ int main(int argc, char** argv)
         }
 
         {
-            ThreadPool pool(arguments.limit);
+            ThreadPool pool(arguments.chunkSize);
             bool stop = false;
+
             while (!stop && line < arguments.limit)
             {
                 if (line % arguments.chunkSize == 0)
