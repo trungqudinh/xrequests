@@ -10,11 +10,18 @@
 #include <functional>
 #include <stdexcept>
 
-class ThreadPool {
+class ThreadPool
+{
 public:
-    ThreadPool(std::size_t);
+    void initialize(std::size_t);
+    void clear();
+    bool isInitialized() { return initialized; }
+
     template<typename F, typename... Args>
     auto enqueue(F&& f, Args&&... args) -> std::future<typename std::result_of<F(Args...)>::type>;
+
+    ThreadPool() = default;
+    ThreadPool(std::size_t);
     ~ThreadPool();
 
 private:
@@ -26,21 +33,35 @@ private:
     std::mutex queue_mutex;
     std::condition_variable condition;
     bool stop;
+    bool initialized;
 };
 
-// the constructor just launches some amount of workers
-inline ThreadPool::ThreadPool(std::size_t threads) : stop(false) {
-    for(std::size_t i = 0; i < threads; ++i) {
+inline void ThreadPool::initialize(std::size_t threads)
+{
+    if (initialized)
+    {
+        throw std::runtime_error("Could not re-initialize. Current size: " + std::to_string(threads));
+    }
+    stop = false;
+    initialized = true;
+    for(std::size_t i = 0; i < threads; ++i)
+    {
         workers.emplace_back(
-            [this] {
-                for(;;) {
+            [this]
+            {
+                for(;;)
+                {
                     std::function<void()> task;
                     {
                         std::unique_lock<std::mutex> lock(this->queue_mutex);
                         this->condition.wait(lock,
-                            [this]{ return this->stop || !this->tasks.empty();
-                        });
-                        if (this->stop && this->tasks.empty()) {
+                            [this]
+                            {
+                                return this->stop || !this->tasks.empty();
+                            }
+                        );
+                        if (this->stop && this->tasks.empty())
+                        {
                             return;
                         }
                         task = std::move(this->tasks.front());
@@ -53,9 +74,16 @@ inline ThreadPool::ThreadPool(std::size_t threads) : stop(false) {
     }
 }
 
+// the constructor just launches some amount of workers
+inline ThreadPool::ThreadPool(std::size_t threads) : stop(false), initialized(true)
+{
+    initialize(threads);
+}
+
 // add new work item to the pool
 template<typename F, typename... Args>
-auto ThreadPool::enqueue(F&& f, Args&&... args) -> std::future<typename std::result_of<F(Args...)>::type> {
+auto ThreadPool::enqueue(F&& f, Args&&... args) -> std::future<typename std::result_of<F(Args...)>::type>
+{
     using return_type = typename std::result_of<F(Args...)>::type;
 
     auto task = std::make_shared< std::packaged_task<return_type()> >(
@@ -66,7 +94,8 @@ auto ThreadPool::enqueue(F&& f, Args&&... args) -> std::future<typename std::res
     {
         std::unique_lock<std::mutex> lock(queue_mutex);
         // don't allow enqueueing after stopping the pool
-        if (stop) {
+        if (stop)
+        {
             throw std::runtime_error("enqueue on stopped ThreadPool");
         }
         tasks.emplace([task](){ (*task)(); });
@@ -75,14 +104,25 @@ auto ThreadPool::enqueue(F&& f, Args&&... args) -> std::future<typename std::res
     return res;
 }
 
-// the destructor joins all threads
-inline ThreadPool::~ThreadPool() {
+inline void ThreadPool::clear()
+{
+    if (!initialized)
+    {
+        return;
+    }
     {
         std::unique_lock<std::mutex> lock(queue_mutex);
         stop = true;
     }
     condition.notify_all();
-    for (auto &worker : workers) {
+    for (auto &worker : workers)
+    {
         worker.join();
     }
+    initialized = false;
+}
+
+// the destructor joins all threads
+inline ThreadPool::~ThreadPool() {
+    clear();
 }

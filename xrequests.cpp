@@ -628,7 +628,7 @@ int main(int argc, char** argv)
         }
 
         {
-            ThreadPool pool(arguments.chunkSize);
+            ThreadPool pool;
 
             while (std::getline(file, url) && line < arguments.limit)
             {
@@ -648,6 +648,12 @@ int main(int argc, char** argv)
                         {
                             times = randomSum<int>(arguments.timeRange, arguments.chunkSize, arguments.minDistance);
                         }
+
+                        if (!pool.isInitialized())
+                        {
+                            pool.initialize(arguments.chunkSize);
+                        }
+
                         pool.enqueue(fetch, arguments.prefix + url, arguments, data);
                         std::this_thread::sleep_for(std::chrono::milliseconds(times.back()));
                         times.pop_back();
