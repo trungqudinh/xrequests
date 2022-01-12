@@ -331,6 +331,9 @@ vector<T> randomSum(T _sum, int _len, T _min = 0, int _factor = 100000 )
     }
     for (auto& i : res)
     {
+        /* Basic scaling the genarated value a[i]:
+            a[i] = a[i] * ((given_sum / sum(a))%)
+        */
         i = static_cast<T>((i * 1.0) / sum * (_sum - (_min * _len)) + _min);
     }
     return res;
